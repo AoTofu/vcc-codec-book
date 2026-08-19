@@ -1,1 +1,1 @@
-failed: exit code 12
+success
