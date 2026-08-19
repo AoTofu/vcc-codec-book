@@ -1,0 +1,74 @@
+name: Build and publish PDF
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'source-parts/**'
+      - '.github/workflows/build-pdf.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install XeLaTeX, Japanese support, fonts, and PDF tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            latexmk \
+            texlive-xetex \
+            texlive-lang-japanese \
+            texlive-latex-extra \
+            texlive-pictures \
+            texlive-fonts-recommended \
+            fonts-noto-core \
+            fonts-noto-cjk \
+            fonts-noto-mono \
+            poppler-utils \
+            unzip
+          fc-cache -f
+          fc-match 'Noto Sans'
+          fc-match 'Noto Sans CJK JP'
+          fc-match 'Noto Sans Mono'
+
+      - name: Restore and verify LaTeX source
+        run: |
+          cat source-parts/part-*.b64 | base64 --decode > source.zip
+          echo 'da6702fce07a58613882db5fe2fd541639f264a1078be1a03ffbba22439ea293  source.zip' | sha256sum -c -
+          rm -rf build-src
+          mkdir build-src
+          unzip -q source.zip -d build-src
+
+      - name: Build book with XeLaTeX
+        run: |
+          cd build-src/VCC_codec_for_kids_LaTeX
+          latexmk -xelatex -interaction=nonstopmode -halt-on-error main.tex
+          cp main.pdf "$GITHUB_WORKSPACE/VCC_codec_for_kids.pdf"
+
+      - name: Validate PDF and render cover
+        run: |
+          test "$(pdfinfo VCC_codec_for_kids.pdf | awk '/^Pages:/ {print $2}')" = '70'
+          pdffonts VCC_codec_for_kids.pdf
+          pdftoppm -f 1 -singlefile -png -r 140 VCC_codec_for_kids.pdf cover
+          test -s cover.png
+          sha256sum VCC_codec_for_kids.pdf cover.png
+
+      - name: Commit generated PDF and cover
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VCC_codec_for_kids.pdf cover.png
+          if git diff --cached --quiet; then
+            echo 'Generated files are already up to date.'
+            exit 0
+          fi
+          git commit -m 'Build published PDF'
+          git push
